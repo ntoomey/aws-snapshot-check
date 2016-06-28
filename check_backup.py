@@ -6,17 +6,10 @@
 import boto3
 import pytz
 from datetime import datetime,timedelta
+from time import time,gmtime
+from calendar import timegm
 
-#alias = "ntoomey"
-#accountfilter = [{'Name':'owner-alias','Values':[alias]}] 
-
-try:
-    ec2 = boto3.client('ec2')
-except ec2exception:
-    print "Error connecting to ec2"
-
-print "Getting Volumes...."
-ebs = ec2.describe_volumes()
+LogGroup = "EBS-Snapshot"
 
 
 def CheckSnapshotDate(snapshotdate,checkdate): 
@@ -31,7 +24,7 @@ def CheckSnapshotDate(snapshotdate,checkdate):
 
 
 def CheckSnapShot(snapshots):
-    
+    # How many days old the snapshot can't be.  This is more than 1 day old 
     backupdate = GetCheckDate(1)
 
     if snapshots:
@@ -44,18 +37,54 @@ def CheckSnapShot(snapshots):
     else:
         return 0
     
-
 def GetCheckDate(deltadays):
     if deltadays :
         ret = datetime.now(pytz.utc) - timedelta(days=deltadays)
     else:
+        #default to 1 day.  no idea why this is here
         ret = datetime.now(pytz.utc) - timedelta(days=1)
     return ret
 
+def CheckLogGroups(botoclient,loggroupname):
+    res = botoclient.describe_log_groups(logGroupNamePrefix=loggroupname)
+    if ( len(res['logGroups']) == 0):
+        return 0
+    else:
+        return 1
 
-#print key,value returns because docs are a pain in the arse.
-#for key,value in ebs.iteritems():
-#   print key
+def CreateLogGroup(botoclient,loggroupname):
+    botoclient.create_log_group(logGroupName=loggroupname)
+
+def CreateLogStream(botoclient,loggroupname):
+    d = datetime.now(pytz.utc)
+    streamName = d.strftime("%d/%m/%Y_%H%M%S")
+    botoclient.create_log_stream(logGroupName=loggroupname,logStreamName=streamName)
+    return streamName
+
+def Epoch():
+    return timegm(gmtime()) * 1000
+    
+    
+
+# Initialize CloudWatch Logging
+cwlogs = boto3.client('logs')
+if (CheckLogGroups(cwlogs,LogGroup) == 0):
+    CreateLogGroup(cwlogs,LogGroup) 
+
+LogStream = CreateLogStream(cwlogs,LogGroup)
+#LogStream = "28/06/2016_181221"
+
+
+# main()!
+try:
+    ec2 = boto3.client('ec2')
+except ec2exception:
+    print "Error connecting to ec2"
+
+print "Getting Volumes...."
+ebs = ec2.describe_volumes()
+
+logEvents = list()
 
 print "Looking for recent backups...."
 for volumes in ebs['Volumes']:
@@ -63,9 +92,15 @@ for volumes in ebs['Volumes']:
     # get snapshots for volume
     snapshots = ec2.describe_snapshots(Filters=[{'Name':'volume-id','Values':[volumeid]}])
     snaps = snapshots['Snapshots']
-    # returned structure has a list of all snapshots.  loop through to identify the newest.
-    # then compare that newest to the current date.  
     print "Volume id: " + volumeid
-
     a = CheckSnapShot(snaps)    
-    print a
+
+    message = volumeid, a
+
+    status = {'timestamp' : Epoch(),'message' : str(message)}
+    print status
+    logEvents.append(status) 
+    
+ret = cwlogs.put_log_events(logGroupName=LogGroup,logStreamName=LogStream,logEvents=logEvents)
+
+print ret
