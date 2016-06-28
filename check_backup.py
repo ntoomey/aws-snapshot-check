@@ -65,42 +65,38 @@ def Epoch():
     return timegm(gmtime()) * 1000
     
     
+def lambda_handler(event, context):
+    # Initialize CloudWatch Logging
+    cwlogs = boto3.client('logs')
+    if (CheckLogGroups(cwlogs,LogGroup) == 0):
+        CreateLogGroup(cwlogs,LogGroup) 
 
-# Initialize CloudWatch Logging
-cwlogs = boto3.client('logs')
-if (CheckLogGroups(cwlogs,LogGroup) == 0):
-    CreateLogGroup(cwlogs,LogGroup) 
+    LogStream = CreateLogStream(cwlogs,LogGroup)
+    try:
+        ec2 = boto3.client('ec2')
+    except ec2exception:
+        print "Error connecting to ec2"
 
-LogStream = CreateLogStream(cwlogs,LogGroup)
-#LogStream = "28/06/2016_181221"
+    print "Getting Volumes...."
+    ebs = ec2.describe_volumes()
 
+    logEvents = list()
 
-# main()!
-try:
-    ec2 = boto3.client('ec2')
-except ec2exception:
-    print "Error connecting to ec2"
+    print "Looking for recent backups...."
+    for volumes in ebs['Volumes']:
+        volumeid = volumes['VolumeId']
+        # get snapshots for volume
+        snapshots = ec2.describe_snapshots(Filters=[{'Name':'volume-id','Values':[volumeid]}])
+        snaps = snapshots['Snapshots']
+        print "Volume id: " + volumeid
+        a = CheckSnapShot(snaps)    
 
-print "Getting Volumes...."
-ebs = ec2.describe_volumes()
+        message = volumeid, a
 
-logEvents = list()
-
-print "Looking for recent backups...."
-for volumes in ebs['Volumes']:
-    volumeid = volumes['VolumeId']
-    # get snapshots for volume
-    snapshots = ec2.describe_snapshots(Filters=[{'Name':'volume-id','Values':[volumeid]}])
-    snaps = snapshots['Snapshots']
-    print "Volume id: " + volumeid
-    a = CheckSnapShot(snaps)    
-
-    message = volumeid, a
-
-    status = {'timestamp' : Epoch(),'message' : str(message)}
-    print status
-    logEvents.append(status) 
+        status = {'timestamp' : Epoch(),'message' : str(message)}
+        print status
+        logEvents.append(status) 
     
-ret = cwlogs.put_log_events(logGroupName=LogGroup,logStreamName=LogStream,logEvents=logEvents)
+    ret = cwlogs.put_log_events(logGroupName=LogGroup,logStreamName=LogStream,logEvents=logEvents)
 
-print ret
+    print ret
