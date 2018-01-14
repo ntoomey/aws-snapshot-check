@@ -103,4 +103,3 @@ for volumes in ebs['Volumes']:
     
 ret = cwlogs.put_log_events(logGroupName=LogGroup,logStreamName=LogStream,logEvents=logEvents)
 
-print ret
